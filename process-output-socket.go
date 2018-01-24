@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"container/list"
 	"fmt"
 	"net"
 	"os"
@@ -8,34 +10,36 @@ import (
 	"sync"
 )
 
-var firstConnection = true
+var startProcessOnConnect = true
 var mutex = &sync.Mutex{}
 
-var socketCloseChannels []chan bool
-var socketDataChannels []chan []byte
+type conChanListElement struct {
+	Connection *net.TCPConn
+}
 
-var stdOutCh = make(chan []byte, 512)
-var stdErrCh = make(chan []byte, 512)
-var socketChan = make(chan []byte, 1024)
+var activeConnectionsList = list.New()
+
+var processOutputChannel = make(chan []byte, 512)
+var dataFromSocketChannel = make(chan []byte, 1024)
+
 var processDoneChan = make(chan bool)
 
 func main() {
 	go acceptConnections()
+
 	for {
 		select {
+		case fromSocketBytes := <-dataFromSocketChannel:
+			sendDataToAllConnections(fromSocketBytes)
 		case <-processDoneChan:
 			fmt.Println("Process Done")
-			for _, ch := range socketCloseChannels {
-				ch <- true
-			}
-		case outByteArr := <-stdOutCh:
-			for _, ch := range socketDataChannels {
-				ch <- outByteArr
-			}
-		case errByteArr := <-stdErrCh:
-			for _, ch := range socketDataChannels {
-				ch <- errByteArr
-			}
+			sendDataToAllConnections([]byte("Process Done\n"))
+
+			mutex.Lock()
+			startProcessOnConnect = true
+			mutex.Unlock()
+		case outByteArr := <-processOutputChannel:
+			sendDataToAllConnections(outByteArr)
 		}
 	}
 }
@@ -45,11 +49,17 @@ func acceptConnections() {
 	tcpAddr, err := net.ResolveTCPAddr("tcp4", ":"+port)
 	checkFatalError(err)
 
+	listener, err := net.ListenTCP("tcp4", tcpAddr)
+	if err != nil {
+		fmt.Println("Fatal Error #1 - cannot bind to port", port)
+		fmt.Println(err)
+		os.Exit(3)
+	}
+
 	fmt.Println("Listening on port " + port)
 
-	listener, err := net.ListenTCP("tcp4", tcpAddr)
 	for {
-		conn, err := listener.Accept()
+		conn, err := listener.AcceptTCP()
 		if err != nil {
 			continue
 		}
@@ -57,75 +67,78 @@ func acceptConnections() {
 	}
 }
 
-func handleConnection(conn net.Conn) {
+func handleConnection(conn *net.TCPConn) {
+
+	fmt.Printf("Client connected: %s\n", conn.RemoteAddr())
 
 	mutex.Lock()
-	if firstConnection {
-		firstConnection = false
+	if startProcessOnConnect {
+		startProcessOnConnect = false
 		mutex.Unlock()
 		go launchProcess()
 	} else {
 		mutex.Unlock()
 	}
-	var sockCloseChan = make(chan bool)
-	var sockDataChan = make(chan []byte, 512)
 
-	socketCloseChannels = append(socketCloseChannels, sockCloseChan)
-	socketDataChannels = append(socketDataChannels, sockDataChan)
+	mutex.Lock()
+	connectionListEntry := activeConnectionsList.PushBack(conChanListElement{conn})
+	mutex.Unlock()
 
-	for {
-		select {
-		case <-sockCloseChan:
-			conn.Write([]byte("Process Done!\r\n"))
-			conn.Close()
-		case msg := <-sockDataChan:
-			conn.Write(msg)
-		}
+	go readFromConnection(conn, connectionListEntry)
+
+}
+func readFromConnection(conn *net.TCPConn, chanListEntry *list.Element) {
+
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		socketData := scanner.Bytes()
+		fmt.Printf("Read %d bytes from socket %s\n", len(socketData), conn.RemoteAddr())
+
+		withNewLine := append(socketData, "\n"...)
+		fmt.Printf("%s", withNewLine)
+		dataFromSocketChannel <- withNewLine
 	}
+	if err := scanner.Err(); err != nil {
+		fmt.Println("Socket Scanner Error: ", err)
+	}
+	fmt.Println("Client disconnect: ", conn.RemoteAddr())
 
+	mutex.Lock()
+	activeConnectionsList.Remove(chanListEntry)
+	mutex.Unlock()
+
+}
+func sendDataToAllConnections(data []byte) {
+	i := 0
+	for e := activeConnectionsList.Front(); e != nil; e = e.Next() {
+		i++
+		fmt.Println("Sending Data to ", i)
+		el := e.Value.(conChanListElement)
+		el.Connection.Write(data)
+	}
 }
 
 type stdOutChannel struct {
-	//*sync.Mutex
 }
 
-func newStdOutChannel() *stdOutChannel {
-	return &stdOutChannel{
-	//Mutex: &sync.Mutex{},
-	}
-}
-
-// io.Writer interface is only this method
 func (fd *stdOutChannel) Write(p []byte) (int, error) {
-	//fd.Lock()
-	//defer fd.Unlock()
 	fmt.Printf("stdout read %d bytes\n", len(p))
 	fmt.Printf("%s", p)
 
-	stdOutCh <- p
+	processOutputChannel <- p
 
 	return len(p), nil
 }
 
 type stdErrChannel struct {
-	//*sync.Mutex
 }
 
-func newStdErrChannel() *stdErrChannel {
-	return &stdErrChannel{
-	//Mutex: &sync.Mutex{},
-	}
-}
-
-// io.Writer interface is only this method
 func (fd *stdErrChannel) Write(p []byte) (int, error) {
-	//fd.Lock()
-	//defer fd.Unlock()
 
 	fmt.Printf("stderr read %d bytesn\n", len(p))
 	fmt.Printf("%s", p)
 
-	stdErrCh <- p
+	processOutputChannel <- p
 	return len(p), nil
 }
 
@@ -133,12 +146,12 @@ func launchProcess() {
 	var err error
 	fmt.Println("Launching process")
 
-	cmd := exec.Command("/home/miner/gocode/src/github.com/ryandrew/stdout-once-per-sec/stdout-once-per-sec")
+	cmd := exec.Command("/home/miner/gocode/src/github.com/ryandrew/stdout-once-per-sec/stdout-once-per-sec", "4")
+	//cmd := exec.Command("java", "-jar", "spigot-1.12.2.jar")
+	//cmd.Dir = "/home/miner/mineframe/minecraft"
 
-	stdoutWriter := newStdOutChannel()
-	stderrWriter := newStdErrChannel()
-	cmd.Stdout = stdoutWriter
-	cmd.Stderr = stderrWriter
+	cmd.Stdout = new(stdOutChannel)
+	cmd.Stderr = new(stdErrChannel)
 
 	err = cmd.Start()
 	checkFatalError(err)
