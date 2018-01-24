@@ -7,7 +7,9 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
+	"time"
 )
 
 var startProcessOnConnect = true
@@ -71,6 +73,10 @@ func handleConnection(conn *net.TCPConn) {
 
 	fmt.Printf("Client connected: %s\n", conn.RemoteAddr())
 
+	if !initializeClient(conn) {
+		return
+	}
+
 	mutex.Lock()
 	if startProcessOnConnect {
 		startProcessOnConnect = false
@@ -86,6 +92,40 @@ func handleConnection(conn *net.TCPConn) {
 
 	go readFromConnection(conn, connectionListEntry)
 
+}
+func initializeClient(conn *net.TCPConn) bool {
+	conn.Write([]byte("PI"))
+	timeoutTimer := time.NewTimer(time.Second * 4)
+
+	challengeResponseSucceeded := make(chan bool)
+	go initializeReadChallengeResponse(conn, challengeResponseSucceeded)
+
+	select {
+	case <-challengeResponseSucceeded:
+		timeoutTimer.Stop()
+		return true
+	case <-timeoutTimer.C:
+		fmt.Println("Connection init failed, timeout exceeded")
+		conn.Close()
+		return false
+	}
+
+}
+func initializeReadChallengeResponse(conn *net.TCPConn, success chan bool) {
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		fmt.Println("Scan...")
+		challengeResponse := scanner.Text()
+		fmt.Printf("INIT Read %d bytes from socket %s\n", len(challengeResponse), conn.RemoteAddr())
+		if strings.Compare(challengeResponse, "ZZ") != 0 {
+			fmt.Println("Connection init failed, invalid challenge response")
+			conn.Close()
+			return
+		}
+		conn.Write([]byte("PIZZA!\n"))
+		success <- true
+		return
+	}
 }
 func readFromConnection(conn *net.TCPConn, chanListEntry *list.Element) {
 
