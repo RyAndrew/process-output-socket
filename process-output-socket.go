@@ -115,8 +115,12 @@ func initializeReadChallengeResponse(conn *net.TCPConn, success chan bool) {
 	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
 		fmt.Println("Scan...")
+		//challengeResponse := scanner.Bytes()
 		challengeResponse := scanner.Text()
 		fmt.Printf("INIT Read %d bytes from socket %s\n", len(challengeResponse), conn.RemoteAddr())
+		fmt.Println(challengeResponse)
+		//fmt.Println(string(challengeResponse))
+		//if strings.Compare(string(challengeResponse), "ZZ") != 0 {
 		if strings.Compare(challengeResponse, "ZZ") != 0 {
 			fmt.Println("Connection init failed, invalid challenge response")
 			conn.Close()
@@ -186,7 +190,7 @@ func launchProcess() {
 	var err error
 	fmt.Println("Launching process")
 
-	cmd := exec.Command("/home/miner/gocode/src/github.com/ryandrew/stdout-once-per-sec/stdout-once-per-sec", "4")
+	cmd := exec.Command(configCommand, "4")
 	//cmd := exec.Command("java", "-jar", "spigot-1.12.2.jar")
 	//cmd.Dir = "/home/miner/mineframe/minecraft"
 
