@@ -1,6 +1,7 @@
-# process-output-socket
+# process-output-socket.go
 
 - golang app
+- tested to work on linux and windows
 - listens on tcp port 25560
 - upon first connection launches a process and all stdout and stderr are broadcast to all clients in realtime
 - currently it launches a program that sends a timestamp 4 times to stdout
@@ -14,3 +15,6 @@
 - Upon new clients connecting they are presented with a PI
 - Within 4 seconds they must respond with a ZZ otherwise the connection is closed
 - The server will acknowledge with a PIZZA! and begin to send output to the client
+
+# Video Demo
+ [![Youtube Demo](https://img.youtube.com/vi/AdZcdxCciIk/0.jpg)](https://www.youtube.com/watch?v=AdZcdxCciIk)
