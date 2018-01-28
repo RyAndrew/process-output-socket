@@ -94,11 +94,11 @@ func handleConnection(conn *net.TCPConn) {
 
 }
 func initializeClient(conn *net.TCPConn) bool {
-	conn.Write([]byte("PI"))
-	timeoutTimer := time.NewTimer(time.Second * 4)
 
 	challengeResponseSucceeded := make(chan bool)
 	go initializeReadChallengeResponse(conn, challengeResponseSucceeded)
+
+	timeoutTimer := time.NewTimer(time.Second * 4)
 
 	select {
 	case <-challengeResponseSucceeded:
@@ -112,24 +112,28 @@ func initializeClient(conn *net.TCPConn) bool {
 
 }
 func initializeReadChallengeResponse(conn *net.TCPConn, success chan bool) {
+	conn.Write([]byte("PI"))
+
 	scanner := bufio.NewScanner(conn)
-	for scanner.Scan() {
-		fmt.Println("Scan...")
-		//challengeResponse := scanner.Bytes()
-		challengeResponse := scanner.Text()
-		fmt.Printf("INIT Read %d bytes from socket %s\n", len(challengeResponse), conn.RemoteAddr())
-		fmt.Println(challengeResponse)
-		//fmt.Println(string(challengeResponse))
-		//if strings.Compare(string(challengeResponse), "ZZ") != 0 {
-		if strings.Compare(challengeResponse, "ZZ") != 0 {
-			fmt.Println("Connection init failed, invalid challenge response")
-			conn.Close()
-			return
-		}
-		conn.Write([]byte("PIZZA!\n"))
-		success <- true
+	//for scanner.Scan() {
+	scanner.Scan()
+
+	fmt.Println("Scan...")
+	//challengeResponse := scanner.Bytes()
+	challengeResponse := scanner.Text()
+	fmt.Printf("INIT Read %d bytes from socket %s\n", len(challengeResponse), conn.RemoteAddr())
+	fmt.Println(challengeResponse)
+	//fmt.Println(string(challengeResponse))
+	//if strings.Compare(string(challengeResponse), "ZZ") != 0 {
+	if strings.Compare(challengeResponse, "ZZ") != 0 {
+		fmt.Println("Connection init failed, invalid challenge response")
+		conn.Close()
 		return
 	}
+	conn.Write([]byte("PIZZA!\n"))
+	success <- true
+	return
+	//}
 }
 func readFromConnection(conn *net.TCPConn, chanListEntry *list.Element) {
 
@@ -138,11 +142,12 @@ func readFromConnection(conn *net.TCPConn, chanListEntry *list.Element) {
 		socketData := scanner.Bytes()
 		fmt.Printf("Read %d bytes from socket %s\n", len(socketData), conn.RemoteAddr())
 
-		withNewLine := append(socketData, "\n"...)
+		withNewLine := append(socketData, '\n')
 		fmt.Printf("%s", withNewLine)
 		dataFromSocketChannel <- withNewLine
 	}
-	if err := scanner.Err(); err != nil {
+	err := scanner.Err()
+	if err != nil {
 		fmt.Println("Socket Scanner Error: ", err)
 	}
 	fmt.Println("Client disconnect: ", conn.RemoteAddr())
