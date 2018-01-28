@@ -2,4 +2,4 @@
 
 package main
 
-var configCommand string = "./stdout-once-per-sec"
+var configCommand string = "./build/stdout-once-per-sec"
