@@ -2,12 +2,13 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"container/list"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"time"
 )
@@ -95,15 +96,18 @@ func handleConnection(conn *net.TCPConn) {
 }
 func initializeClient(conn *net.TCPConn) bool {
 
-	challengeResponseSucceeded := make(chan bool)
-	go initializeReadChallengeResponse(conn, challengeResponseSucceeded)
+	challengeResponseResult := make(chan bool)
+	go initializeReadChallengeResponse(conn, challengeResponseResult)
 
 	timeoutTimer := time.NewTimer(time.Second * 4)
 
 	select {
-	case <-challengeResponseSucceeded:
+	case success := <-challengeResponseResult:
 		timeoutTimer.Stop()
-		return true
+		if success {
+			return true
+		}
+		return false
 	case <-timeoutTimer.C:
 		fmt.Println("Connection init failed, timeout exceeded")
 		conn.Close()
@@ -111,27 +115,37 @@ func initializeClient(conn *net.TCPConn) bool {
 	}
 
 }
-func initializeReadChallengeResponse(conn *net.TCPConn, success chan bool) {
+func initializeReadChallengeResponse(conn *net.TCPConn, resultChan chan bool) {
 	conn.Write([]byte("PI"))
 
-	scanner := bufio.NewScanner(conn)
+	byteReader := bufio.NewReaderSize(conn, 3)
+	challengeBytes := make([]byte, 3)
+	challengeBytesExpected := []byte{'Z', 'Z', '\r'} //[]byte("PI")
 	//for scanner.Scan() {
-	scanner.Scan()
-
-	fmt.Println("Scan...")
-	//challengeResponse := scanner.Bytes()
-	challengeResponse := scanner.Text()
-	fmt.Printf("INIT Read %d bytes from socket %s\n", len(challengeResponse), conn.RemoteAddr())
-	fmt.Println(challengeResponse)
-	//fmt.Println(string(challengeResponse))
-	//if strings.Compare(string(challengeResponse), "ZZ") != 0 {
-	if strings.Compare(challengeResponse, "ZZ") != 0 {
-		fmt.Println("Connection init failed, invalid challenge response")
-		conn.Close()
+	bytesRead, err := io.ReadFull(byteReader, challengeBytes)
+	if err != nil {
+		fmt.Println("Pizza Handshake error: Socket Read Error!\n", err)
 		return
 	}
+
+	//fmt.Println("Scan...")
+	//challengeResponse := scanner.Bytes()
+	//	challengeResponse := scanner.Text()
+	fmt.Printf("INIT Read %d bytes from socket %s\n", bytesRead, conn.RemoteAddr())
+	fmt.Printf("%s", challengeBytes)
+	//fmt.Println(string(challengeResponse))
+	//if strings.Compare(string(challengeResponse), "ZZ") != 0 {
+
+	if bytes.Compare(challengeBytesExpected, challengeBytes) != 0 {
+		fmt.Println("Pizza Handshake error 2.1: Invalid Challenge Expecting \"ZZ\"")
+
+		conn.Close()
+		resultChan <- false
+		return
+	}
+
 	conn.Write([]byte("PIZZA!\n"))
-	success <- true
+	resultChan <- true
 	return
 	//}
 }
